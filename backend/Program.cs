@@ -22,25 +22,6 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
-
 app.MapGet("/api/students", async (AppDbContext db) =>
 {
     var students = await db.Students.ToListAsync();
@@ -103,9 +84,109 @@ app.MapDelete("/api/students/{id}", async (int id, AppDbContext db) =>
     return Results.NoContent();
 });
 
-app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
+app.MapGet("/api/courses", async (AppDbContext db) =>
 {
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
+    var courses = await db.Courses
+        .OrderBy(course => course.Name)
+        .ToListAsync();
+
+    return Results.Ok(courses);
+});
+
+app.MapGet("/api/courses/{id}", async (int id, AppDbContext db) =>
+{
+    var course = await db.Courses.FindAsync(id);
+
+    if (course is null)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Ok(course);
+});
+
+app.MapPost("/api/courses", async (Course newCourse, AppDbContext db) =>
+{
+    if (string.IsNullOrWhiteSpace(newCourse.Code) ||
+        string.IsNullOrWhiteSpace(newCourse.Name))
+    {
+        return Results.BadRequest("Course code and name are required.");
+    }
+
+    if (newCourse.Fee < 0)
+    {
+        return Results.BadRequest("Course fee cannot be negative.");
+    }
+
+    newCourse.Code = newCourse.Code.Trim().ToUpper();
+    newCourse.Name = newCourse.Name.Trim();
+
+    var codeExists = await db.Courses
+        .AnyAsync(course => course.Code == newCourse.Code);
+
+    if (codeExists)
+    {
+        return Results.Conflict("Course code already exists.");
+    }
+
+    db.Courses.Add(newCourse);
+    await db.SaveChangesAsync();
+
+    return Results.Created($"/api/courses/{newCourse.Id}", newCourse);
+});
+
+app.MapPut("/api/courses/{id}", async (
+    int id,
+    Course updatedCourse,
+    AppDbContext db) =>
+{
+    var course = await db.Courses.FindAsync(id);
+
+    if (course is null)
+    {
+        return Results.NotFound();
+    }
+
+    if (string.IsNullOrWhiteSpace(updatedCourse.Code) ||
+        string.IsNullOrWhiteSpace(updatedCourse.Name))
+    {
+        return Results.BadRequest("Course code and name are required.");
+    }
+
+    var normalizedCode = updatedCourse.Code.Trim().ToUpper();
+
+    var codeExists = await db.Courses.AnyAsync(existingCourse =>
+        existingCourse.Code == normalizedCode &&
+        existingCourse.Id != id);
+
+    if (codeExists)
+    {
+        return Results.Conflict("Course code already exists.");
+    }
+
+    course.Code = normalizedCode;
+    course.Name = updatedCourse.Name.Trim();
+    course.Fee = updatedCourse.Fee;
+    course.IsActive = updatedCourse.IsActive;
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(course);
+});
+
+app.MapDelete("/api/courses/{id}", async (int id, AppDbContext db) =>
+{
+    var course = await db.Courses.FindAsync(id);
+
+    if (course is null)
+    {
+        return Results.NotFound();
+    }
+
+    db.Courses.Remove(course);
+    await db.SaveChangesAsync();
+
+    return Results.NoContent();
+});
+
+app.Run();
