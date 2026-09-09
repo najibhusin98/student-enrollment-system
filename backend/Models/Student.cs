@@ -8,5 +8,7 @@ public class Student
 
     public int Age { get; set; }
 
-    public string Course { get; set; } = string.Empty;
+    public ICollection<Enrollment> Enrollments { get; set; }
+    = new List<Enrollment>();
+
 }

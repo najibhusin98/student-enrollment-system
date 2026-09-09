@@ -61,7 +61,6 @@ app.MapPut("/api/students/{id}", async (int id, Student updatedStudent, AppDbCon
 
     student.Name = updatedStudent.Name;
     student.Age = updatedStudent.Age;
-    student.Course = updatedStudent.Course;
 
     await db.SaveChangesAsync();
 
@@ -189,4 +188,133 @@ app.MapDelete("/api/courses/{id}", async (int id, AppDbContext db) =>
     return Results.NoContent();
 });
 
+app.MapGet("/api/enrollments", async (AppDbContext db) =>
+{
+    var enrollments = await db.Enrollments
+        .AsNoTracking()
+        .OrderByDescending(enrollment => enrollment.EnrolledAt)
+        .Select(enrollment => new
+        {
+            enrollment.Id,
+            enrollment.StudentId,
+            StudentName = enrollment.Student.Name,
+            enrollment.CourseId,
+            CourseCode = enrollment.Course.Code,
+            CourseName = enrollment.Course.Name,
+            enrollment.EnrolledAt,
+            Status = enrollment.Status.ToString()
+        })
+        .ToListAsync();
+
+    return Results.Ok(enrollments);
+});
+
+app.MapPost("/api/enrollments", async (
+    CreateEnrollmentRequest request,
+    AppDbContext db) =>
+{
+    var studentExists = await db.Students
+        .AnyAsync(student => student.Id == request.StudentId);
+
+    if (!studentExists)
+    {
+        return Results.BadRequest("Student does not exist.");
+    }
+
+    var course = await db.Courses.FindAsync(request.CourseId);
+
+    if (course is null)
+    {
+        return Results.BadRequest("Course does not exist.");
+    }
+
+    if (!course.IsActive)
+    {
+        return Results.BadRequest("Course is inactive.");
+    }
+
+    var alreadyEnrolled = await db.Enrollments.AnyAsync(enrollment =>
+        enrollment.StudentId == request.StudentId &&
+        enrollment.CourseId == request.CourseId);
+
+    if (alreadyEnrolled)
+    {
+        return Results.Conflict(
+            "Student is already enrolled in this course.");
+    }
+
+    var enrollment = new Enrollment
+    {
+        StudentId = request.StudentId,
+        CourseId = request.CourseId,
+        Status = EnrollmentStatus.Pending
+    };
+
+    db.Enrollments.Add(enrollment);
+    await db.SaveChangesAsync();
+
+    return Results.Created(
+        $"/api/enrollments/{enrollment.Id}",
+        new
+        {
+            enrollment.Id,
+            enrollment.StudentId,
+            enrollment.CourseId,
+            enrollment.EnrolledAt,
+            Status = enrollment.Status.ToString()
+        });
+});
+
+app.MapPatch("/api/enrollments/{id}/status", async (
+    int id,
+    UpdateEnrollmentStatusRequest request,
+    AppDbContext db) =>
+{
+    var enrollment = await db.Enrollments.FindAsync(id);
+
+    if (enrollment is null)
+    {
+        return Results.NotFound();
+    }
+
+    if (!Enum.TryParse<EnrollmentStatus>(
+        request.Status,
+        true,
+        out var newStatus))
+    {
+        return Results.BadRequest(
+            "Status must be Pending, Active, Completed, or Cancelled.");
+    }
+
+    enrollment.Status = newStatus;
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        enrollment.Id,
+        Status = enrollment.Status.ToString()
+    });
+});
+
+app.MapDelete("/api/enrollments/{id}", async (
+    int id,
+    AppDbContext db) =>
+{
+    var enrollment = await db.Enrollments.FindAsync(id);
+
+    if (enrollment is null)
+    {
+        return Results.NotFound();
+    }
+
+    db.Enrollments.Remove(enrollment);
+    await db.SaveChangesAsync();
+
+    return Results.NoContent();
+});
+
 app.Run();
+
+record CreateEnrollmentRequest(int StudentId, int CourseId);
+
+record UpdateEnrollmentStatusRequest(string Status);
